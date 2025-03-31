@@ -1,9 +1,6 @@
-//import androidx.compose.material3.*
-
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.Button
 import androidx.compose.material.Text
 import androidx.compose.material.TextField
 import androidx.compose.runtime.*
@@ -15,10 +12,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlinx.coroutines.delay
 import org.jetbrains.skia.Image as SkiaImage
 
 
@@ -35,8 +32,36 @@ fun App() {
         """.trimIndent()
     ) }
     var diagramPath by remember { mutableStateOf<Path?>(null) }
-    var regenerateCounter by remember { mutableStateOf(0) }
     val coroutineScope = rememberCoroutineScope()
+
+    var regenerateCounter by remember { mutableStateOf(0) }
+    var isGenerating by remember { mutableStateOf(false) }
+
+    var lastEdit by remember { mutableStateOf(0L) }
+    val debounceDelay = 500L // milliseconds
+
+    LaunchedEffect(mermaidCode) {
+        lastEdit = System.currentTimeMillis()
+        val currentEdit = lastEdit
+
+        delay(debounceDelay)
+
+        if(currentEdit == lastEdit) {
+            isGenerating = true
+            withContext(Dispatchers.IO) {
+                try {
+                    Files.createDirectories(Path.of("./src/mermaid"))
+                    Files.writeString(Path.of("./src/mermaid/graph.mmd"), mermaidCode)
+                    diagramPath = generateDiagram()
+                    regenerateCounter++
+                } catch (e: Exception) {
+                    println("Error generating diagram: ${e.message}")
+                } finally {
+                    isGenerating = false
+                }
+            }
+        }
+    }
 
     // Button to trigger diagram generation
     Column(
@@ -50,20 +75,8 @@ fun App() {
             modifier = Modifier.fillMaxWidth().height(200.dp)
         )
 
-        Button(onClick = {
-            // First, save the mermaid code to the file
-            coroutineScope.launch {
-                withContext(Dispatchers.IO) {
-                    Files.createDirectories(Path.of("./src/mermaid"))
-                    Files.writeString(Path.of("./src/mermaid/graph.mmd"), mermaidCode)
-
-                    // Then generate the diagram
-                    diagramPath = generateDiagram()
-                    regenerateCounter++
-                }
-            }
-        }) {
-            Text("Generate Diagram")
+        if (isGenerating) {
+            Text("Generating diagram...")
         }
 
         diagramPath?.let { path ->
@@ -88,7 +101,11 @@ fun App() {
             } else {
                 Text("Error: Image file not found")
             }
-        } ?: Text("Click 'Generate Diagram' to create the diagram")
+        } ?: run {
+            if (!isGenerating) {
+                Text("Type mermaid code to generate a diagram")
+            }
+        }
     }
 }
 
