@@ -1,11 +1,13 @@
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Text
 import androidx.compose.material.TextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -13,6 +15,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.Files
@@ -21,11 +24,14 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import org.jetbrains.skia.Image as SkiaImage
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.*
+
+
 data class DiagramState(
-    val code: String = """
-flowchart TD
-A --> D
-    """.trimIndent(),
+    val code: String = """flowchart TD""".trimIndent(),
     val imageBytes: ByteArray? = null,
     var isLoading: Boolean = false,
     val error: String? = null
@@ -33,50 +39,81 @@ A --> D
     fun copyWithLoading() = copy(isLoading = true, error = null)
     fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
 
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is DiagramState) return false
+//    override fun equals(other: Any?): Boolean {
+//        if (this === other) return true
+//        if (other !is DiagramState) return false
+//
+//        if (code != other.code) return false
+//        if (imageBytes != null) {
+//            if (other.imageBytes == null) return false
+//            if (!imageBytes.contentEquals(other.imageBytes)) return false
+//        } else if (other.imageBytes != null) return false
+//        if (isLoading != other.isLoading) return false
+//        if (error != other.error) return false
+//
+//        return true
+//    }
+//
+//    override fun hashCode(): Int {
+//        var result = code.hashCode()
+//        result = 31 * result + (imageBytes?.contentHashCode() ?: 0)
+//        result = 31 * result + isLoading.hashCode()
+//        result = 31 * result + (error?.hashCode() ?: 0)
+//        return result
+//    }
+}
+class DiagramViewModel {
+    private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var diagramJob: Job? = null
 
-        if (code != other.code) return false
-        if (imageBytes != null) {
-            if (other.imageBytes == null) return false
-            if (!imageBytes.contentEquals(other.imageBytes)) return false
-        } else if (other.imageBytes != null) return false
-        if (isLoading != other.isLoading) return false
-        if (error != other.error) return false
+    var state by mutableStateOf(DiagramState())
+        private set
 
-        return true
+    fun updateCode(newCode: String) {
+        state = state.copy(code = newCode)
+        generateDiagramWithDebounce(newCode)
     }
 
-    override fun hashCode(): Int {
-        var result = code.hashCode()
-        result = 31 * result + (imageBytes?.contentHashCode() ?: 0)
-        result = 31 * result + isLoading.hashCode()
-        result = 31 * result + (error?.hashCode() ?: 0)
-        return result
+    private fun generateDiagramWithDebounce(code: String) {
+        // Cancel previous job if it's still running
+        diagramJob?.cancel()
+
+        diagramJob = viewModelScope.launch {
+            delay(500) // Debounce
+            state = state.copyWithLoading()
+
+            try {
+                val diagramPath = withContext(Dispatchers.IO) {
+                    generateDiagram(code)
+                }
+                val bytes = withContext(Dispatchers.IO) {
+                    Files.readAllBytes(diagramPath)
+                }
+                state = state.copy(imageBytes = bytes, isLoading = false)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                state = state.copyWithError(e)
+            }
+        }
+    }
+
+    fun dispose() {
+        diagramJob?.cancel()
+        viewModelScope.cancel()
     }
 }
 
 @Preview
 @Composable
 fun App() {
-    var state by remember { mutableStateOf(DiagramState()) }
+    val viewModel = remember { DiagramViewModel() }
+    val state = viewModel.state
+    val imageCache = remember { mutableMapOf<String, ImageBitmap>() }
 
-    LaunchedEffect(state.code) {
-        if (state.code.isBlank()) return@LaunchedEffect
-
-        delay(500)
-
-        state = state.copyWithLoading()
-
-        try {
-            val diagramPath = withContext(Dispatchers.IO) {
-                generateDiagram(state.code)
-            }
-            val bytes = withContext(Dispatchers.IO) { Files.readAllBytes(diagramPath)}
-            state = state.copy(imageBytes = bytes, isLoading = false)
-        } catch (e: Exception) {
-            state = state.copyWithError(e)
+    // Clean up resources when the composable leaves the composition
+    DisposableEffect(viewModel) {
+        onDispose {
+            viewModel.dispose()
         }
     }
 
@@ -86,13 +123,16 @@ fun App() {
     ) {
         TextField(
             value = state.code,
-            onValueChange = { state = state.copy(code = it) },
+            onValueChange = { viewModel.updateCode(it) },
             label = { Text("Mermaid Code") },
             modifier = Modifier.fillMaxWidth().height(200.dp)
         )
 
         if (state.isLoading) {
-            Text("Generating diagram...")
+            CircularProgressIndicator(
+                modifier = Modifier.size(48.dp),
+                strokeWidth = 4.dp
+            )
         } else if (state.error != null) {
             Text("Error: ${state.error}")
         }
@@ -102,8 +142,10 @@ fun App() {
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                val imageBitmap = remember(bytes) {
-                    SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
+                val imageBitmap = remember(bytes.contentHashCode()) {
+                    imageCache.getOrPut(bytes.contentHashCode().toString()) {
+                        SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
+                    }
                 }
 
                 Image(
@@ -123,12 +165,12 @@ fun App() {
 
 private suspend fun generateDiagram(code: String): Path {
     val tempDir = withContext(Dispatchers.IO) {
-        Files.createTempDirectory("mermaid")
+        Files.createTempDirectory("mermaid").also {
+            it.toFile().deleteOnExit()  // Ensure cleanup on JVM exit
+        }
     }
     val inputFile = tempDir.resolve("input.mmd")
     val outputFile = tempDir.resolve("output.png")
-
-
 
     try {
         // Write to temp file
@@ -137,12 +179,17 @@ private suspend fun generateDiagram(code: String): Path {
         }
 
         // Execute with proper timeout and capture output
-        val processBuilder = ProcessBuilder("mmdc", "-i", inputFile.toString(), "-o", outputFile.toString())
+        val processBuilder = ProcessBuilder(
+            "mmdc",
+            "-i", inputFile.toString(),
+            "-o", outputFile.toString(),
+            "--scale", "2",  // 2x resolution for retina displays
+            "--backgroundColor", "transparent"
+        )
 
         val process = withContext(Dispatchers.IO) {
             processBuilder.redirectErrorStream(true).start()
         }
-        val output = process.inputStream.bufferedReader().readText()
 
         if (!withContext(Dispatchers.IO) {
                 process.waitFor(5, TimeUnit.SECONDS)
