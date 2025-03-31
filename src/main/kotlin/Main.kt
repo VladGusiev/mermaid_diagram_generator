@@ -12,123 +12,155 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
-import kotlinx.coroutines.delay
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.jetbrains.skia.Image as SkiaImage
 
+data class DiagramState(
+    val code: String = """
+flowchart TD
+A --> D
+    """.trimIndent(),
+    val imageBytes: ByteArray? = null,
+    var isLoading: Boolean = false,
+    val error: String? = null
+) {
+    fun copyWithLoading() = copy(isLoading = true, error = null)
+    fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is DiagramState) return false
+
+        if (code != other.code) return false
+        if (imageBytes != null) {
+            if (other.imageBytes == null) return false
+            if (!imageBytes.contentEquals(other.imageBytes)) return false
+        } else if (other.imageBytes != null) return false
+        if (isLoading != other.isLoading) return false
+        if (error != other.error) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = code.hashCode()
+        result = 31 * result + (imageBytes?.contentHashCode() ?: 0)
+        result = 31 * result + isLoading.hashCode()
+        result = 31 * result + (error?.hashCode() ?: 0)
+        return result
+    }
+}
 
 @Preview
 @Composable
 fun App() {
-    var mermaidCode by remember { mutableStateOf(
-        """
-            flowchart TD
-            A --> B
-            A --> C
-            B --> D
-            C --> D
-        """.trimIndent()
-    ) }
-    var diagramPath by remember { mutableStateOf<Path?>(null) }
-    val coroutineScope = rememberCoroutineScope()
+    var state by remember { mutableStateOf(DiagramState()) }
 
-    var regenerateCounter by remember { mutableStateOf(0) }
-    var isGenerating by remember { mutableStateOf(false) }
+    LaunchedEffect(state.code) {
+        if (state.code.isBlank()) return@LaunchedEffect
 
-    var lastEdit by remember { mutableStateOf(0L) }
-    val debounceDelay = 500L // milliseconds
+        delay(500)
 
-    LaunchedEffect(mermaidCode) {
-        lastEdit = System.currentTimeMillis()
-        val currentEdit = lastEdit
+        state = state.copyWithLoading()
 
-        delay(debounceDelay)
-
-        if(currentEdit == lastEdit) {
-            isGenerating = true
-            withContext(Dispatchers.IO) {
-                try {
-                    Files.createDirectories(Path.of("./src/mermaid"))
-                    Files.writeString(Path.of("./src/mermaid/graph.mmd"), mermaidCode)
-                    diagramPath = generateDiagram()
-                    regenerateCounter++
-                } catch (e: Exception) {
-                    println("Error generating diagram: ${e.message}")
-                } finally {
-                    isGenerating = false
-                }
+        try {
+            val diagramPath = withContext(Dispatchers.IO) {
+                generateDiagram(state.code)
             }
+            val bytes = withContext(Dispatchers.IO) { Files.readAllBytes(diagramPath)}
+            state = state.copy(imageBytes = bytes, isLoading = false)
+        } catch (e: Exception) {
+            state = state.copyWithError(e)
         }
     }
 
-    // Button to trigger diagram generation
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         TextField(
-            value = mermaidCode,
-            onValueChange = { mermaidCode = it },
+            value = state.code,
+            onValueChange = { state = state.copy(code = it) },
             label = { Text("Mermaid Code") },
             modifier = Modifier.fillMaxWidth().height(200.dp)
         )
 
-        if (isGenerating) {
+        if (state.isLoading) {
             Text("Generating diagram...")
+        } else if (state.error != null) {
+            Text("Error: ${state.error}")
         }
 
-        diagramPath?.let { path ->
-            if (Files.exists(path)) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Convert file to ImageBitmap
-                    val imageBitmap = remember(path, regenerateCounter) {
-                        val bytes = Files.readAllBytes(path)
-                        SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
-                    }
-
-                    Image(
-                        bitmap = imageBitmap,
-                        contentDescription = "Diagram",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
+        state.imageBytes?.let { bytes ->
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                val imageBitmap = remember(bytes) {
+                    SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
                 }
-            } else {
-                Text("Error: Image file not found")
+
+                Image(
+                    bitmap = imageBitmap,
+                    contentDescription = "Diagram",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         } ?: run {
-            if (!isGenerating) {
+            if (!state.isLoading && state.error == null) {
                 Text("Type mermaid code to generate a diagram")
             }
         }
     }
 }
 
-private suspend fun generateDiagram(
-    inputPath: String = "./src/mermaid/graph.mmd",
-    outputPath: String = "./src/mermaid/diagram.png"
-): Path {
-    val output = Path.of(outputPath)
-
-    // Create parent directories if they don't exist
-    withContext(Dispatchers.IO) {
-        Files.createDirectories(output.parent)
+private suspend fun generateDiagram(code: String): Path {
+    val tempDir = withContext(Dispatchers.IO) {
+        Files.createTempDirectory("mermaid")
     }
+    val inputFile = tempDir.resolve("input.mmd")
+    val outputFile = tempDir.resolve("output.png")
 
-    // Run the mermaid CLI command
-    withContext(Dispatchers.IO) {
-        ProcessBuilder("mmdc", "-i", inputPath, "-o", outputPath)
-            .redirectErrorStream(true)
-            .start()
-            .waitFor()
+
+
+    try {
+        // Write to temp file
+        withContext(Dispatchers.IO) {
+            Files.writeString(inputFile, code)
+        }
+
+        // Execute with proper timeout and capture output
+        val processBuilder = ProcessBuilder("mmdc", "-i", inputFile.toString(), "-o", outputFile.toString())
+
+        val process = withContext(Dispatchers.IO) {
+            processBuilder.redirectErrorStream(true).start()
+        }
+        val output = process.inputStream.bufferedReader().readText()
+
+        if (!withContext(Dispatchers.IO) {
+                process.waitFor(5, TimeUnit.SECONDS)
+            }) {
+            process.destroy()
+            throw TimeoutException("Diagram generation timed out")
+        }
+
+        if (!Files.exists(outputFile)) {
+            throw IOException("Output file was not created at ${outputFile.toAbsolutePath()}")
+        }
+
+        return outputFile
+    } catch (e: Exception) {
+        println("Error during diagram generation: ${e.message}")
+        e.printStackTrace()
+        throw e
     }
-
-    return output
 }
 
 
