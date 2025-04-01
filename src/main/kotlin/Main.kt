@@ -1,9 +1,9 @@
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.CircularProgressIndicator
-import androidx.compose.material.Text
-import androidx.compose.material.TextField
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,10 +23,11 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import org.jetbrains.skia.Image as SkiaImage
-
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.*
 
 
@@ -38,29 +39,6 @@ data class DiagramState(
 ) {
     fun copyWithLoading() = copy(isLoading = true, error = null)
     fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
-
-//    override fun equals(other: Any?): Boolean {
-//        if (this === other) return true
-//        if (other !is DiagramState) return false
-//
-//        if (code != other.code) return false
-//        if (imageBytes != null) {
-//            if (other.imageBytes == null) return false
-//            if (!imageBytes.contentEquals(other.imageBytes)) return false
-//        } else if (other.imageBytes != null) return false
-//        if (isLoading != other.isLoading) return false
-//        if (error != other.error) return false
-//
-//        return true
-//    }
-//
-//    override fun hashCode(): Int {
-//        var result = code.hashCode()
-//        result = 31 * result + (imageBytes?.contentHashCode() ?: 0)
-//        result = 31 * result + isLoading.hashCode()
-//        result = 31 * result + (error?.hashCode() ?: 0)
-//        return result
-//    }
 }
 class DiagramViewModel {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -108,7 +86,13 @@ class DiagramViewModel {
 fun App() {
     val viewModel = remember { DiagramViewModel() }
     val state = viewModel.state
-    val imageCache = remember { mutableMapOf<String, ImageBitmap>() }
+    val imageCache = remember {
+        object : LinkedHashMap<String, ImageBitmap>(10, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry<String, ImageBitmap>): Boolean {
+                return size > 5 // Limit cache size
+            }
+        }
+    }
 
     // Clean up resources when the composable leaves the composition
     DisposableEffect(viewModel) {
@@ -128,14 +112,7 @@ fun App() {
             modifier = Modifier.fillMaxWidth().height(200.dp)
         )
 
-        if (state.isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(48.dp),
-                strokeWidth = 4.dp
-            )
-        } else if (state.error != null) {
-            Text("Error: ${state.error}")
-        }
+        diagramLoading(state)
 
         state.imageBytes?.let { bytes ->
             Box(
@@ -159,6 +136,61 @@ fun App() {
             if (!state.isLoading && state.error == null) {
                 Text("Type mermaid code to generate a diagram")
             }
+        }
+    }
+}
+
+private fun diagramLoading(state: DiagramState) {
+    if (state.isLoading) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(48.dp),
+                strokeWidth = 4.dp,
+                color = Color(0xFF3B82F6)
+            )
+
+            Text(
+                text = "Generating diagram...",
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.primary
+            )
+
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .width(180.dp)
+                    .padding(top = 8.dp),
+                color = Color(0xFF3B82F6)
+            )
+        }
+    }
+    if (state.error != null) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .background(
+                        color = Color(0xFFF87171),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "!",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Text(
+                text = "Error: ${state.error}",
+                color = Color(0xFFF87171)
+            )
         }
     }
 }
@@ -191,11 +223,16 @@ private suspend fun generateDiagram(code: String): Path {
             processBuilder.redirectErrorStream(true).start()
         }
 
+        // Capture error output for better diagnostics
+        val output = withContext(Dispatchers.IO) {
+            process.inputStream.bufferedReader().use { it.readText() }
+        }
+
         if (!withContext(Dispatchers.IO) {
                 process.waitFor(5, TimeUnit.SECONDS)
             }) {
             process.destroy()
-            throw TimeoutException("Diagram generation timed out")
+            throw TimeoutException("Diagram generation timed out. Output: $output")
         }
 
         if (!Files.exists(outputFile)) {
