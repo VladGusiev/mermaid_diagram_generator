@@ -32,24 +32,48 @@ import kotlinx.coroutines.*
 
 
 data class DiagramState(
-    val code: String = """flowchart TD""".trimIndent(),
+    var edgesList: List<String> = mutableListOf(),
     val imageBytes: ByteArray? = null,
     var isLoading: Boolean = false,
     val error: String? = null
 ) {
+    val code: String = buildMermaidCode(edgesList)
     fun copyWithLoading() = copy(isLoading = true, error = null)
     fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
 }
+
+private fun buildMermaidCode(edges: List<String>): String {
+    return buildString {
+        appendLine("flowchart TD")
+
+        for (edge in edges) {
+            if (edge.isBlank()) continue
+
+            val parts = edge.split("->")
+            if (parts.size != 2) continue
+
+            val source = parts[0].trim()
+            val target = parts[1].trim()
+
+            if (source.isEmpty() || target.isEmpty()) continue
+            appendLine("$source --> $target")
+        }
+    }
+}
+
 class DiagramViewModel {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var diagramJob: Job? = null
+    private val diagramGenerator = DiagramGenerator()
 
     var state by mutableStateOf(DiagramState())
         private set
 
-    fun updateCode(newCode: String) {
-        state = state.copy(code = newCode)
-        generateDiagramWithDebounce(newCode)
+    fun updateEdges(userEdges: String) {
+        state = state.copy(
+            edgesList = userEdges.split("\n")
+        )
+        generateDiagramWithDebounce(state.code)
     }
 
     private fun generateDiagramWithDebounce(code: String) {
@@ -62,7 +86,7 @@ class DiagramViewModel {
 
             try {
                 val diagramPath = withContext(Dispatchers.IO) {
-                    generateDiagram(code)
+                    diagramGenerator.generate(code)
                 }
                 val bytes = withContext(Dispatchers.IO) {
                     Files.readAllBytes(diagramPath)
@@ -105,148 +129,161 @@ fun App() {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        TextField(
-            value = state.code,
-            onValueChange = { viewModel.updateCode(it) },
-            label = { Text("Mermaid Code") },
-            modifier = Modifier.fillMaxWidth().height(200.dp)
+
+        userInputField(state, viewModel)
+
+        when  {
+            state.isLoading -> diagramLoading()
+            state.error != null -> errorDisplay(state)
+            state.imageBytes != null -> graphDisplay(state.imageBytes, imageCache)
+            else -> Text(
+                text = "Type: A->B",
+                modifier = Modifier.padding(vertical = 16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun graphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, ImageBitmap>) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        val imageBitmap = remember(bytes.contentHashCode()) {
+            imageCache.getOrPut(bytes.contentHashCode().toString()) {
+                SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
+            }
+        }
+
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = "Diagram",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+@Composable
+private fun userInputField(state: DiagramState, viewModel: DiagramViewModel) {
+    TextField(
+        value = state.edgesList.joinToString("\n"),
+        onValueChange = { viewModel.updateEdges(it) },
+        label = { Text("Directed Graph") },
+        placeholder = { Text("One edge per line: A->B\nB->C") },
+        modifier = Modifier.fillMaxWidth().height(200.dp)
+    )
+}
+
+@Composable
+private fun diagramLoading() {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(48.dp),
+            strokeWidth = 4.dp,
+            color = Color(0xFF3B82F6)
         )
 
-        diagramLoading(state)
-
-        state.imageBytes?.let { bytes ->
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                val imageBitmap = remember(bytes.contentHashCode()) {
-                    imageCache.getOrPut(bytes.contentHashCode().toString()) {
-                        SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
-                    }
-                }
-
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = "Diagram",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-        } ?: run {
-            if (!state.isLoading && state.error == null) {
-                Text("Type mermaid code to generate a diagram")
-            }
-        }
-    }
-}
-
-private fun diagramLoading(state: DiagramState) {
-    if (state.isLoading) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(48.dp),
-                strokeWidth = 4.dp,
-                color = Color(0xFF3B82F6)
-            )
-
-            Text(
-                text = "Generating diagram...",
-                style = MaterialTheme.typography.body2,
-                color = MaterialTheme.colors.primary
-            )
-
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .width(180.dp)
-                    .padding(top = 8.dp),
-                color = Color(0xFF3B82F6)
-            )
-        }
-    }
-    if (state.error != null) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .background(
-                        color = Color(0xFFF87171),
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "!",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Text(
-                text = "Error: ${state.error}",
-                color = Color(0xFFF87171)
-            )
-        }
-    }
-}
-
-private suspend fun generateDiagram(code: String): Path {
-    val tempDir = withContext(Dispatchers.IO) {
-        Files.createTempDirectory("mermaid").also {
-            it.toFile().deleteOnExit()  // Ensure cleanup on JVM exit
-        }
-    }
-    val inputFile = tempDir.resolve("input.mmd")
-    val outputFile = tempDir.resolve("output.png")
-
-    try {
-        // Write to temp file
-        withContext(Dispatchers.IO) {
-            Files.writeString(inputFile, code)
-        }
-
-        // Execute with proper timeout and capture output
-        val processBuilder = ProcessBuilder(
-            "mmdc",
-            "-i", inputFile.toString(),
-            "-o", outputFile.toString(),
-            "--scale", "2",  // 2x resolution for retina displays
-            "--backgroundColor", "transparent"
+        Text(
+            text = "Generating diagram...",
+            style = MaterialTheme.typography.body2,
+            color = MaterialTheme.colors.primary
         )
 
-        val process = withContext(Dispatchers.IO) {
-            processBuilder.redirectErrorStream(true).start()
-        }
-
-        // Capture error output for better diagnostics
-        val output = withContext(Dispatchers.IO) {
-            process.inputStream.bufferedReader().use { it.readText() }
-        }
-
-        if (!withContext(Dispatchers.IO) {
-                process.waitFor(5, TimeUnit.SECONDS)
-            }) {
-            process.destroy()
-            throw TimeoutException("Diagram generation timed out. Output: $output")
-        }
-
-        if (!Files.exists(outputFile)) {
-            throw IOException("Output file was not created at ${outputFile.toAbsolutePath()}")
-        }
-
-        return outputFile
-    } catch (e: Exception) {
-        println("Error during diagram generation: ${e.message}")
-        e.printStackTrace()
-        throw e
+        LinearProgressIndicator(
+            modifier = Modifier
+                .width(180.dp)
+                .padding(top = 8.dp),
+            color = Color(0xFF3B82F6)
+        )
     }
 }
 
+@Composable
+private fun errorDisplay(state: DiagramState) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .background(
+                    color = Color(0xFFF87171),
+                    shape = CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "!",
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Text(
+            text = "Error: ${state.error}",
+            color = Color(0xFFF87171)
+        )
+    }
+}
+
+class DiagramGenerator {
+    suspend fun generate(code: String): Path {
+        val tempDir = withContext(Dispatchers.IO) {
+            Files.createTempDirectory("mermaid").also {
+                it.toFile().deleteOnExit()  // Ensure cleanup on JVM exit
+            }
+        }
+        val inputFile = tempDir.resolve("input.mmd")
+        val outputFile = tempDir.resolve("output.png")
+
+        try {
+            // Write to temp file
+            withContext(Dispatchers.IO) {
+                Files.writeString(inputFile, code)
+            }
+
+            val processBuilder = ProcessBuilder(
+                "mmdc",
+                "-i", inputFile.toString(),
+                "-o", outputFile.toString(),
+                "--scale", "2",
+                "--backgroundColor", "transparent"
+            )
+
+            val process = withContext(Dispatchers.IO) {
+                processBuilder.redirectErrorStream(true).start()
+            }
+
+            // Capture error output for better diagnostics
+            val output = withContext(Dispatchers.IO) {
+                process.inputStream.bufferedReader().use { it.readText() }
+            }
+
+            if (!withContext(Dispatchers.IO) {
+                    process.waitFor(5, TimeUnit.SECONDS)
+                }) {
+                process.destroy()
+                throw TimeoutException("Diagram generation timed out. Output: $output")
+            }
+
+            if (!Files.exists(outputFile)) {
+                throw IOException("Output file was not created at ${outputFile.toAbsolutePath()}")
+            }
+
+            return outputFile
+        } catch (e: Exception) {
+            println("Error during diagram generation: ${e.message}")
+            e.printStackTrace()
+            throw e
+        }
+    }
+}
 
 fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Graph Generator") {
