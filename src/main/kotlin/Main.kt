@@ -30,35 +30,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.*
 
+private const val DEBOUNCE_DELAY = 500L
+private const val PROCESS_TIMEOUT = 5L
+private const val CACHE_SIZE = 500
 
 data class DiagramState(
-    var edgesList: List<String> = mutableListOf(),
+    val edgesList: List<String> = mutableListOf(),
     val imageBytes: ByteArray? = null,
-    var isLoading: Boolean = false,
+    val isLoading: Boolean = false,
     val error: String? = null
 ) {
-    val code: String = buildMermaidCode(edgesList)
+    val code: String
+        get() = DiagramViewModel.buildMermaidCode(edgesList)
     fun copyWithLoading() = copy(isLoading = true, error = null)
     fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
-}
-
-private fun buildMermaidCode(edges: List<String>): String {
-    return buildString {
-        appendLine("flowchart TD")
-
-        for (edge in edges) {
-            if (edge.isBlank()) continue
-
-            val parts = edge.split("->")
-            if (parts.size != 2) continue
-
-            val source = parts[0].trim()
-            val target = parts[1].trim()
-
-            if (source.isEmpty() || target.isEmpty()) continue
-            appendLine("$source --> $target")
-        }
-    }
 }
 
 class DiagramViewModel {
@@ -68,6 +53,27 @@ class DiagramViewModel {
 
     var state by mutableStateOf(DiagramState())
         private set
+
+    companion object {
+        fun buildMermaidCode(edges: List<String>): String {
+            return buildString {
+                appendLine("flowchart TD")
+
+                for (edge in edges) {
+                    if (edge.isBlank()) continue
+
+                    val parts = edge.split("->")
+                    if (parts.size != 2) continue
+
+                    val source = parts[0].trim()
+                    val target = parts[1].trim()
+
+                    if (source.isEmpty() || target.isEmpty()) continue
+                    appendLine("$source --> $target")
+                }
+            }
+        }
+    }
 
     fun updateEdges(userEdges: String) {
         state = state.copy(
@@ -81,7 +87,7 @@ class DiagramViewModel {
         diagramJob?.cancel()
 
         diagramJob = viewModelScope.launch {
-            delay(500) // Debounce
+            delay(DEBOUNCE_DELAY) // Debounce
             state = state.copyWithLoading()
 
             try {
@@ -103,6 +109,7 @@ class DiagramViewModel {
         diagramJob?.cancel()
         viewModelScope.cancel()
     }
+
 }
 
 @Preview
@@ -113,7 +120,7 @@ fun App() {
     val imageCache = remember {
         object : LinkedHashMap<String, ImageBitmap>(10, 0.75f, true) {
             override fun removeEldestEntry(eldest: Map.Entry<String, ImageBitmap>): Boolean {
-                return size > 5 // Limit cache size
+                return size > CACHE_SIZE // Limit cache size
             }
         }
     }
@@ -266,7 +273,7 @@ class DiagramGenerator {
             }
 
             if (!withContext(Dispatchers.IO) {
-                    process.waitFor(5, TimeUnit.SECONDS)
+                    process.waitFor(PROCESS_TIMEOUT, TimeUnit.SECONDS)
                 }) {
                 process.destroy()
                 throw TimeoutException("Diagram generation timed out. Output: $output")
