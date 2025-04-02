@@ -1,7 +1,10 @@
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.*
 import androidx.compose.runtime.*
@@ -35,13 +38,14 @@ private const val PROCESS_TIMEOUT = 5L
 private const val CACHE_SIZE = 20
 
 data class DiagramState(
-    val edgesList: List<String> = mutableListOf(),
+    val verticesList: List<String> = mutableListOf(),
+    val verticesStates: Map<String, Boolean> = mapOf(),
     val imageBytes: ByteArray? = null,
     val isLoading: Boolean = false,
     val error: String? = null
 ) {
     val code: String
-        get() = DiagramViewModel.buildMermaidCode(edgesList)
+        get() = DiagramViewModel.buildMermaidCode(verticesList, verticesStates)
     fun copyWithLoading() = copy(isLoading = true, error = null)
     fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
 }
@@ -55,7 +59,7 @@ class DiagramViewModel {
         private set
 
     companion object {
-        fun buildMermaidCode(edges: List<String>): String {
+        fun buildMermaidCode(edges: List<String>, verticesStates: Map<String, Boolean>): String {
             return buildString {
                 appendLine("flowchart TD")
 
@@ -69,7 +73,18 @@ class DiagramViewModel {
                     val target = parts[1].trim()
 
                     if (source.isEmpty() || target.isEmpty()) continue
-                    appendLine("$source --> $target")
+
+                    val sourceActive = verticesStates[source] ?: true
+                    val targetActive = verticesStates[target] ?: true
+
+                    if (sourceActive && targetActive) {
+                        appendLine("$source --> $target")
+                    }
+                    else if (sourceActive && !targetActive) {
+                        appendLine(source)
+                    } else if (!sourceActive && targetActive) {
+                        appendLine(target)
+                    }
                 }
             }
         }
@@ -94,9 +109,26 @@ class DiagramViewModel {
 
     }
 
+    fun toggleVertex(vertex: String, isActive: Boolean) {
+        val currentVertices = state.verticesStates.toMutableMap()
+        currentVertices[vertex] = isActive
+
+        state = state.copy(verticesStates = currentVertices)
+        generateDiagramWithDebounce(state.code)
+    }
+
     fun updateEdges(userEdges: String) {
+        val allVertices = userEdges.split("\n")
+
+        val uniqueVertices = getUniqueVertices(allVertices)
+
+        val vertexStateMap = uniqueVertices.associateWith { vertex ->
+            state.verticesStates[vertex] ?: true
+        }
+
         state = state.copy(
-            edgesList = userEdges.split("\n")
+            verticesList = userEdges.split("\n"),
+            verticesStates = vertexStateMap
         )
         generateDiagramWithDebounce(state.code)
     }
@@ -157,7 +189,7 @@ fun App() {
     ) {
 
         UserInputField(state, viewModel)
-        VerticesListDisplay(state)
+        VerticesListDisplay(state, viewModel)
 
         when  {
             state.isLoading -> DiagramLoading()
@@ -195,7 +227,7 @@ private fun GraphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, Ima
 @Composable
 private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
     TextField(
-        value = state.edgesList.joinToString("\n"),
+        value = state.verticesList.joinToString("\n"),
         onValueChange = { viewModel.updateEdges(it) },
         label = { Text("Directed Graph") },
         placeholder = { Text("One edge per line:\nA->B\nB->C") },
@@ -204,9 +236,48 @@ private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
 }
 
 @Composable
-private fun VerticesListDisplay(state: DiagramState) {
-    val uniqueVertices = remember(state.edgesList) {
-        DiagramViewModel.getUniqueVertices(state.edgesList)
+private fun VertexToggle (
+    vertex: String,
+    isActive: Boolean,
+    onToggle: (String, Boolean) -> Unit
+)  {
+    Surface(
+        modifier = Modifier.padding(4.dp),
+        shape = MaterialTheme.shapes.small,
+        color = if (isActive) MaterialTheme.colors.primary else Color.Gray,
+        contentColor = Color.White
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .clickable { onToggle(vertex, !isActive) },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = vertex,
+                style = MaterialTheme.typography.body2
+            )
+
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        color = if (isActive) Color.White else Color.Red,
+                        shape = CircleShape
+                    )
+            )
+        }
+    }
+}
+
+@Composable
+private fun VerticesListDisplay(
+    state: DiagramState,
+    viewModel: DiagramViewModel
+) {
+    val uniqueVertices = remember(state.verticesList) {
+        DiagramViewModel.getUniqueVertices(state.verticesList)
     }
 
     Row(
@@ -219,15 +290,18 @@ private fun VerticesListDisplay(state: DiagramState) {
             color = MaterialTheme.colors.primary
         )
     }
-    Row (
+    LazyRow (
         modifier = Modifier.fillMaxWidth().padding(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        uniqueVertices.forEach { vertex ->
-            Text(
-                text = vertex,
-                style = MaterialTheme.typography.body2,
-                color = MaterialTheme.colors.primary
+        items(uniqueVertices) { vertex ->
+            val isActive = state.verticesStates[vertex] == true
+            VertexToggle(
+                vertex = vertex,
+                isActive = isActive,
+                onToggle = { v, isActive ->
+                    viewModel.toggleVertex(v, isActive)
+                }
             )
         }
     }
