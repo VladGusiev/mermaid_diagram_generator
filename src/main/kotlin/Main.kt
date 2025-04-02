@@ -32,7 +32,7 @@ import kotlinx.coroutines.*
 
 private const val DEBOUNCE_DELAY = 500L
 private const val PROCESS_TIMEOUT = 5L
-private const val CACHE_SIZE = 500
+private const val CACHE_SIZE = 20
 
 data class DiagramState(
     val edgesList: List<String> = mutableListOf(),
@@ -73,6 +73,25 @@ class DiagramViewModel {
                 }
             }
         }
+
+        fun getUniqueVertices(edges: List<String>): List<String> {
+            val nodes = mutableSetOf<String>()
+
+            for (edge in edges) {
+                if (edge.isBlank()) continue
+
+                val parts = edge.split("->")
+                if (parts.size != 2) continue
+
+                val source = parts[0].trim()
+                val target = parts[1].trim()
+
+                if (source.isNotEmpty()) nodes.add(source)
+                if (target.isNotEmpty()) nodes.add(target)
+            }
+            return nodes.toList().sorted()
+        }
+
     }
 
     fun updateEdges(userEdges: String) {
@@ -137,12 +156,13 @@ fun App() {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
 
-        userInputField(state, viewModel)
+        UserInputField(state, viewModel)
+        VerticesListDisplay(state)
 
         when  {
-            state.isLoading -> diagramLoading()
-            state.error != null -> errorDisplay(state)
-            state.imageBytes != null -> graphDisplay(state.imageBytes, imageCache)
+            state.isLoading -> DiagramLoading()
+            state.error != null -> ErrorDisplay(state)
+            state.imageBytes != null -> GraphDisplay(state.imageBytes, imageCache)
             else -> Text(
                 text = "Type: A->B",
                 modifier = Modifier.padding(vertical = 16.dp),
@@ -152,7 +172,7 @@ fun App() {
 }
 
 @Composable
-private fun graphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, ImageBitmap>) {
+private fun GraphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, ImageBitmap>) {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -173,18 +193,48 @@ private fun graphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, Ima
 }
 
 @Composable
-private fun userInputField(state: DiagramState, viewModel: DiagramViewModel) {
+private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
     TextField(
         value = state.edgesList.joinToString("\n"),
         onValueChange = { viewModel.updateEdges(it) },
         label = { Text("Directed Graph") },
-        placeholder = { Text("One edge per line: A->B\nB->C") },
+        placeholder = { Text("One edge per line:\nA->B\nB->C") },
         modifier = Modifier.fillMaxWidth().height(200.dp)
     )
 }
 
 @Composable
-private fun diagramLoading() {
+private fun VerticesListDisplay(state: DiagramState) {
+    val uniqueVertices = remember(state.edgesList) {
+        DiagramViewModel.getUniqueVertices(state.edgesList)
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "Unique Vertices",
+            style = MaterialTheme.typography.h6,
+            color = MaterialTheme.colors.primary
+        )
+    }
+    Row (
+        modifier = Modifier.fillMaxWidth().padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        uniqueVertices.forEach { vertex ->
+            Text(
+                text = vertex,
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun DiagramLoading() {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -212,7 +262,7 @@ private fun diagramLoading() {
 }
 
 @Composable
-private fun errorDisplay(state: DiagramState) {
+private fun ErrorDisplay(state: DiagramState) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
