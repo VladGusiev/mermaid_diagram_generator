@@ -1,10 +1,12 @@
 import androidx.compose.desktop.ui.tooling.preview.Preview
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.*
 import androidx.compose.runtime.*
@@ -187,11 +189,29 @@ fun App() {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(200.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight()
+            ) {
+                Text(
+                    text = "Input Graph",
+                    style = MaterialTheme.typography.h6,
+                    color = MaterialTheme.colors.primary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                UserInputField(state, viewModel)
+            }
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight()
+            ) {
+                VerticesListDisplay(state, viewModel)
+            }
+        }
 
-        UserInputField(state, viewModel)
-        VerticesListDisplay(state, viewModel)
-
-        when  {
+        when {
             state.isLoading -> DiagramLoading()
             state.error != null -> ErrorDisplay(state)
             state.imageBytes != null -> GraphDisplay(state.imageBytes, imageCache)
@@ -231,7 +251,7 @@ private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
         onValueChange = { viewModel.updateEdges(it) },
         label = { Text("Directed Graph") },
         placeholder = { Text("One edge per line:\nA->B\nB->C") },
-        modifier = Modifier.fillMaxWidth().height(200.dp)
+        modifier = Modifier.fillMaxSize()
     )
 }
 
@@ -290,19 +310,27 @@ private fun VerticesListDisplay(
             color = MaterialTheme.colors.primary
         )
     }
-    LazyRow (
-        modifier = Modifier.fillMaxWidth().padding(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        border = BorderStroke(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.12f))
     ) {
-        items(uniqueVertices) { vertex ->
-            val isActive = state.verticesStates[vertex] == true
-            VertexToggle(
-                vertex = vertex,
-                isActive = isActive,
-                onToggle = { v, isActive ->
-                    viewModel.toggleVertex(v, isActive)
-                }
-            )
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 50.dp),
+            contentPadding = PaddingValues(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(uniqueVertices) { vertex ->
+                val isActive = state.verticesStates[vertex] == true
+                VertexToggle(
+                    vertex = vertex,
+                    isActive = isActive,
+                    onToggle = { v, isActive ->
+                        viewModel.toggleVertex(v, isActive)
+                    }
+                )
+            }
         }
     }
 }
