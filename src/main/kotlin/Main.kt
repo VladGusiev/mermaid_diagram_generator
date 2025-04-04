@@ -1,13 +1,11 @@
 import androidx.compose.desktop.ui.tooling.preview.Preview
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,7 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.*
 
-private const val DEBOUNCE_DELAY = 500L
+private const val DEBOUNCE_DELAY = 100L
 private const val PROCESS_TIMEOUT = 5L
 private const val CACHE_SIZE = 20
 
@@ -52,6 +50,12 @@ data class DiagramState(
     fun copyWithError(e: Throwable) = copy(isLoading = false, error = e.message)
 }
 
+class GraphSyntaxError (
+    message: String,
+    lineContent: String,
+    lineNumber: Int
+) : Exception("Error on line $lineNumber: $message\n$lineContent")
+
 class DiagramViewModel {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var diagramJob: Job? = null
@@ -65,30 +69,62 @@ class DiagramViewModel {
             return buildString {
                 appendLine("flowchart TD")
 
-                for (edge in edges) {
+                for ((index, edge) in edges.withIndex()) {
                     if (edge.isBlank()) continue
 
-                    val parts = edge.split("->")
-                    if (parts.size != 2) continue
-
-                    val source = parts[0].trim()
-                    val target = parts[1].trim()
-
-                    if (source.isEmpty() || target.isEmpty()) continue
-
-                    val sourceActive = verticesStates[source] ?: true
-                    val targetActive = verticesStates[target] ?: true
-
-                    if (sourceActive && targetActive) {
-                        appendLine("$source --> $target")
+                    if (edge.contains("<->")) {
+                        throw GraphSyntaxError("Bidirectional edges are not supported", edge, index + 1)
+                    } else if (edge.contains("->") && edge.contains("<-")) {
+                        throw GraphSyntaxError("Only one transition per line allowed", edge, index + 1)
                     }
-                    else if (sourceActive && !targetActive) {
-                        appendLine(source)
-                    } else if (!sourceActive && targetActive) {
-                        appendLine(target)
+
+                    try {
+                        val rightArrowParts = extractVertices(edge, "->")
+                        val leftArrowParts = extractVertices(edge, "<-")
+
+                        val (source, target) = when {
+                            rightArrowParts != null -> {
+                                if (rightArrowParts[0].contains(" ") || rightArrowParts[1].contains(" ")) {
+                                    throw GraphSyntaxError("Node names cannot contain spaces", edge, index + 1)
+                                }
+                                Pair(rightArrowParts[0], rightArrowParts[1])
+                            }
+                            leftArrowParts != null -> {
+                                if (leftArrowParts[0].contains(" ") || leftArrowParts[1].contains(" ")) {
+                                    throw GraphSyntaxError("Node names cannot contain spaces", edge, index + 1)
+                                }
+                                Pair(leftArrowParts[1], leftArrowParts[0])
+                            }
+                            else -> throw GraphSyntaxError("Expected '->' or '<-' were not found", edge, index + 1)
+                        }
+
+                        if (source.isEmpty() || target.isEmpty())
+                            throw GraphSyntaxError("Source or target vertex is empty", edge, index + 1)
+
+                        val sourceActive = verticesStates[source] ?: true
+                        val targetActive = verticesStates[target] ?: true
+
+                        if (sourceActive && targetActive) {
+                            appendLine("$source --> $target")
+                        }
+                        else if (sourceActive && !targetActive) {
+                            appendLine(source)
+                        } else if (!sourceActive && targetActive) {
+                            appendLine(target)
+                        }
+                    } catch (e: Exception) {
+                        if (e is GraphSyntaxError) throw e
+                        throw GraphSyntaxError("Invalid graph notation", edge, index + 1)
                     }
                 }
             }
+        }
+
+        private fun extractVertices(edge: String, divider: String): List<String>? {
+            val parts = edge.split(divider).map { it.trim() }
+            return if (parts.size == 2) {
+                parts
+            } else null
         }
 
         fun getUniqueVertices(edges: List<String>): List<String> {
@@ -97,14 +133,34 @@ class DiagramViewModel {
             for (edge in edges) {
                 if (edge.isBlank()) continue
 
-                val parts = edge.split("->")
-                if (parts.size != 2) continue
+                try {
 
-                val source = parts[0].trim()
-                val target = parts[1].trim()
+                    if (edge.contains("<->")) continue
+                    else if (edge.contains("->") && edge.contains("<-")) continue
 
-                if (source.isNotEmpty()) nodes.add(source)
-                if (target.isNotEmpty()) nodes.add(target)
+                    // Handle both -> and <- formats
+                    val rightArrowParts = extractVertices(edge, "->")
+                    val leftArrowParts = extractVertices(edge, "<-")
+
+                    when {
+                        rightArrowParts != null -> {
+                            val source = rightArrowParts[0]
+                            val target = rightArrowParts[1]
+
+                            if (source.isNotEmpty() && !source.contains(" ")) nodes.add(source)
+                            if (target.isNotEmpty() && !target.contains(" ")) nodes.add(target)
+                        }
+                        leftArrowParts != null -> {
+                            val source = leftArrowParts[0]
+                            val target = leftArrowParts[1]
+
+                            if (source.isNotEmpty() && !source.contains(" ")) nodes.add(source)
+                            if (target.isNotEmpty() && !target.contains(" ")) nodes.add(target)
+                        }
+                    }
+                } catch (e: Exception) {
+                    continue
+                }
             }
             return nodes.toList().sorted()
         }
@@ -120,19 +176,33 @@ class DiagramViewModel {
     }
 
     fun updateEdges(userEdges: String) {
-        val allVertices = userEdges.split("\n")
-
-        val uniqueVertices = getUniqueVertices(allVertices)
-
-        val vertexStateMap = uniqueVertices.associateWith { vertex ->
-            state.verticesStates[vertex] ?: true
-        }
+        val lines = userEdges.split("\n")
 
         state = state.copy(
-            verticesList = userEdges.split("\n"),
-            verticesStates = vertexStateMap
+            verticesList = lines,
+            error = null
         )
-        generateDiagramWithDebounce(state.code)
+
+        try {
+            // Get all unique valid vertices using the companion method
+            val uniqueVertices = getUniqueVertices(lines)
+
+            // Create a new state map that preserves existing toggle states
+            // or defaults to true for new vertices
+            val vertexStateMap = uniqueVertices.associateWith { vertex ->
+                state.verticesStates[vertex] ?: true
+            }
+
+            state = state.copy(
+                verticesStates = vertexStateMap
+            )
+
+            generateDiagramWithDebounce(state.code)
+        } catch (e: GraphSyntaxError) {
+            state = state.copy(error = e.message)
+        } catch (e: Exception) {
+            state = state.copy(error = "Error: ${e.message}")
+        }
     }
 
     private fun generateDiagramWithDebounce(code: String) {
@@ -150,7 +220,7 @@ class DiagramViewModel {
                 val bytes = withContext(Dispatchers.IO) {
                     Files.readAllBytes(diagramPath)
                 }
-                state = state.copy(imageBytes = bytes, isLoading = false)
+                state = state.copy(imageBytes = bytes, isLoading = false, error = null)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 state = state.copyWithError(e)
@@ -246,13 +316,74 @@ private fun GraphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, Ima
 
 @Composable
 private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
-    TextField(
-        value = state.verticesList.joinToString("\n"),
-        onValueChange = { viewModel.updateEdges(it) },
-        label = { Text("Directed Graph") },
-        placeholder = { Text("One edge per line:\nA->B\nB->C") },
-        modifier = Modifier.fillMaxSize()
-    )
+    // Calculate number of lines in the text
+    val text = state.verticesList.joinToString("\n")
+    val lineCount = text.count { it == '\n' } + 1
+
+    // Create shared scroll state
+    val scrollState = remember { ScrollState(0) }
+
+    Row(modifier = Modifier.fillMaxSize()) {
+        // Line numbers column with same scroll state
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(32.dp)
+                .background(MaterialTheme.colors.surface.copy(alpha = 0.2f))
+                .verticalScroll(scrollState)
+        ) {
+            Column(
+                modifier = Modifier.fillMaxHeight(),
+                horizontalAlignment = Alignment.End
+            ) {
+                // Align with TextField content
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Generate line numbers
+                for (i in 1..lineCount) {
+                    Text(
+                        text = "$i",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(end = 8.dp, top = 2.dp, bottom = 2.dp)
+                    )
+                }
+
+                // Padding for scrolling
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+        }
+
+        // Basic TextField with customizations for better control
+        BasicTextField(
+            value = text,
+            onValueChange = { viewModel.updateEdges(it) },
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(top = 18.dp), // Align with line numbers
+            textStyle = MaterialTheme.typography.body2.copy(
+                color = MaterialTheme.colors.onSurface
+            ),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colors.surface)
+                        .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                ) {
+                    if (text.isEmpty()) {
+                        Text(
+                            text = "One edge per line:\nA->B\nB->C",
+                            style = MaterialTheme.typography.body2,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    innerTextField()
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -365,29 +496,38 @@ private fun DiagramLoading() {
 
 @Composable
 private fun ErrorDisplay(state: DiagramState) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    val errorMessage = state.error ?: "Unknown error"
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .background(
-                    color = Color(0xFFF87171),
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
+        // Error header
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .background(
+                        color = Color(0xFFF87171),
+                        shape = CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "!",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Text(
-                text = "!",
-                color = Color.White,
-                fontWeight = FontWeight.Bold
+                text = errorMessage,
+                color = Color(0xFFF87171)
             )
         }
-        Text(
-            text = "Error: ${state.error}",
-            color = Color(0xFFF87171)
-        )
     }
 }
 
