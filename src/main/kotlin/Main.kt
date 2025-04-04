@@ -33,6 +33,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.text.style.TextAlign
+
 
 private const val DEBOUNCE_DELAY = 100L
 private const val PROCESS_TIMEOUT = 5L
@@ -634,7 +638,94 @@ private fun ErrorDisplay(state: DiagramState) {
     }
 }
 
+@Composable
+private fun StartupLoading() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Text("Checking Mermaid CLI installation...", modifier = Modifier.padding(top = 16.dp))
+        }
+    }
+}
+
+@Composable
+private fun MermaidNotInstalledError(
+    mermaidCliStatus: Pair<Boolean, String>?,
+    scope: CoroutineScope
+) {
+    var mermaidCliStatus1 = mermaidCliStatus
+    Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = Icons.Filled.Warning,
+                contentDescription = "Warning",
+                tint = Color.Red,
+                modifier = Modifier.size(48.dp)
+            )
+            Text(
+                "Mermaid CLI (mmdc) is not installed or not working properly.",
+                style = MaterialTheme.typography.h6,
+                modifier = Modifier.padding(vertical = 16.dp),
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "Please install it using: npm install -g @mermaid-js/mermaid-cli",
+                modifier = Modifier.padding(bottom = 16.dp),
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "Error: ${mermaidCliStatus1!!.second}",
+                color = Color.Red,
+                textAlign = TextAlign.Center
+            )
+            Button(
+                onClick = {
+                    scope.launch {
+                        mermaidCliStatus1 = DiagramGenerator.checkMermaidCliInstalled()
+                    }
+                },
+                modifier = Modifier.padding(top = 16.dp)
+            ) {
+                Text("Retry")
+            }
+        }
+    }
+}
+
+
+
 class DiagramGenerator {
+
+    companion object {
+        const val PROCESS_TIMEOUT = 30L
+
+        suspend fun checkMermaidCliInstalled(): Pair<Boolean, String> {
+            return try {
+                val processBuilder = ProcessBuilder("mmdc", "--version")
+
+                val process = withContext(Dispatchers.IO) {
+                    processBuilder.redirectErrorStream(true).start()
+                }
+
+                val output = withContext(Dispatchers.IO) {
+                    process.inputStream.bufferedReader().use { it.readText() }
+                }
+
+                val completed = withContext(Dispatchers.IO) {
+                    process.waitFor(5, TimeUnit.SECONDS)
+                }
+
+                if (completed && process.exitValue() == 0) {
+                    Pair(true, output.trim())
+                } else {
+                    Pair(false, "Mermaid CLI check timed out")
+                }
+            } catch (e: Exception) {
+                Pair(false, e.message ?: "Error checking Mermaid CLI")
+            }
+        }
+    }
+
     suspend fun generate(code: String): Path {
         val tempDir = withContext(Dispatchers.IO) {
             Files.createTempDirectory("mermaid").also {
@@ -687,6 +778,13 @@ class DiagramGenerator {
 }
 
 fun main() = application {
+    var mermaidCliStatus by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        mermaidCliStatus = DiagramGenerator.checkMermaidCliInstalled()
+    }
+
     Window(
         onCloseRequest = ::exitApplication,
         title = "Graph Generator",
@@ -695,7 +793,12 @@ fun main() = application {
             height = 800.dp
         )
     ) {
-        App()
+        if (mermaidCliStatus == null) {
+            StartupLoading()
+        } else if (!mermaidCliStatus!!.first) {
+            MermaidNotInstalledError(mermaidCliStatus, scope)
+        } else {
+            App()
+        }
     }
 }
-
