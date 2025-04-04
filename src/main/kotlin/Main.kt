@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.*
 
 private const val DEBOUNCE_DELAY = 100L
@@ -164,7 +165,6 @@ class DiagramViewModel {
             }
             return nodes.toList().sorted()
         }
-
     }
 
     fun toggleVertex(vertex: String, isActive: Boolean) {
@@ -431,36 +431,80 @@ private fun VerticesListDisplay(
         DiagramViewModel.getUniqueVertices(state.verticesList)
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(2.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            text = "Unique Vertices",
-            style = MaterialTheme.typography.h6,
-            color = MaterialTheme.colors.primary
-        )
+    var searchQuery by remember { mutableStateOf("")}
+    val filteredVertices = remember (uniqueVertices, searchQuery) {
+        if (searchQuery.isBlank()) uniqueVertices
+        else uniqueVertices.filter { it.contains(searchQuery, ignoreCase = true) }
     }
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        border = BorderStroke(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.12f))
-    ) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 50.dp),
-            contentPadding = PaddingValues(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxSize()
+
+    Column (modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            items(uniqueVertices) { vertex ->
-                val isActive = state.verticesStates[vertex] == true
-                VertexToggle(
-                    vertex = vertex,
-                    isActive = isActive,
-                    onToggle = { v, isActive ->
-                        viewModel.toggleVertex(v, isActive)
+            Text(
+                text = "Unique Vertices",
+                style = MaterialTheme.typography.h6,
+                color = MaterialTheme.colors.primary,
+                modifier = Modifier.weight(1f)
+            )
+
+            BasicTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier
+                    .width(120.dp)
+                    .height(30.dp)
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.3f),
+                        shape = MaterialTheme.shapes.small
+                    )
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                textStyle = MaterialTheme.typography.body2.copy(
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colors.onSurface
+                ),
+                singleLine = true,
+                decorationBox = { innerTextField ->
+                    Box(
+                        contentAlignment = Alignment.CenterStart,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = "Search",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        innerTextField()
                     }
-                )
+                }
+            )
+        }
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            border = BorderStroke(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.12f))
+        ) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 50.dp),
+                contentPadding = PaddingValues(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(filteredVertices) { vertex ->
+                    val isActive = state.verticesStates[vertex] == true
+                    VertexToggle(
+                        vertex = vertex,
+                        isActive = isActive,
+                        onToggle = { v, isActive ->
+                            viewModel.toggleVertex(v, isActive)
+                        }
+                    )
+                }
             }
         }
     }
