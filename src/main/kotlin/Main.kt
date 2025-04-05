@@ -1,5 +1,6 @@
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -9,8 +10,6 @@ import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -28,14 +27,17 @@ import org.jetbrains.skia.Image as SkiaImage
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.*
 
 
 private const val DEBOUNCE_DELAY = 100L
@@ -242,7 +244,6 @@ class DiagramViewModel {
         }
     }
 
-    // Add to DiagramViewModel
     fun bulkToggleVertices(vertices: List<String>, isActive: Boolean) {
         val currentVertices = state.verticesStates.toMutableMap()
 
@@ -275,6 +276,7 @@ class DiagramViewModel {
 @Preview
 @Composable
 fun App() {
+
     val viewModel = remember { DiagramViewModel() }
     val state = viewModel.state
     val imageCache = remember {
@@ -332,24 +334,96 @@ fun App() {
 
 @Composable
 private fun GraphDisplay(bytes: ByteArray, imageCache: LinkedHashMap<String, ImageBitmap>) {
-    Box(
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    var dragging by remember { mutableStateOf(false) }
+
+    Column(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        val imageBitmap = remember(bytes.contentHashCode()) {
-            imageCache.getOrPut(bytes.contentHashCode().toString()) {
-                SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxSize()
+                .background(Color.LightGray.copy(alpha = 0.2f))
+                .clip(RectangleShape)
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { dragging = true },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            offset += dragAmount
+                        },
+                        onDragEnd = { dragging = false },
+                        onDragCancel = { dragging = false }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            val imageBitmap = remember(bytes.contentHashCode()) {
+                imageCache.getOrPut(bytes.contentHashCode().toString()) {
+                    SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
+                }
             }
+
+            Image(
+                bitmap = imageBitmap,
+                contentDescription = "Diagram",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y,
+                        clip = true
+                    )
+            )
         }
 
-        Image(
-            bitmap = imageBitmap,
-            contentDescription = "Diagram",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
-        )
+        // Zoom
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Zoom: ${String.format("%.1f", scale)}x",
+                    modifier = Modifier.width(80.dp)
+                )
+
+                // Zoom slider
+                Box(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Slider(
+                        value = scale,
+                        onValueChange = { scale = it },
+                        valueRange = 0.5f..10f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        scale = 1f
+                        offset = Offset.Zero
+                    }
+                ) {
+                    Text("Reset")
+                }
+            }
+        }
     }
 }
+
 
 @Composable
 private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
@@ -697,7 +771,6 @@ private fun MermaidNotInstalledError(
 class DiagramGenerator {
 
     companion object {
-        const val PROCESS_TIMEOUT = 30L
 
         suspend fun checkMermaidCliInstalled(): Pair<Boolean, String> {
             return try {
@@ -712,7 +785,7 @@ class DiagramGenerator {
                 }
 
                 val completed = withContext(Dispatchers.IO) {
-                    process.waitFor(5, TimeUnit.SECONDS)
+                    process.waitFor(PROCESS_TIMEOUT, TimeUnit.SECONDS)
                 }
 
                 if (completed && process.exitValue() == 0) {
@@ -745,7 +818,7 @@ class DiagramGenerator {
                 "mmdc",
                 "-i", inputFile.toString(),
                 "-o", outputFile.toString(),
-                "--scale", "2",
+                "--scale", "20",
                 "--backgroundColor", "transparent"
             )
 
