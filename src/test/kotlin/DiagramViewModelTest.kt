@@ -144,7 +144,7 @@ class DiagramViewModelTest {
             DiagramViewModel.buildMermaidCode(edges, verticesStates)
         }
 
-        assertTrue(exception.message?.contains("Bidirectional edges are not supported") == true)
+        assertTrue(exception.message?.contains("Bidirectional connections are not supported") == true)
     }
 
     @Test
