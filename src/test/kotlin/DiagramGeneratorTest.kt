@@ -38,7 +38,7 @@ class DiagramGeneratorTest {
     }
 
     @Test
-    // When the number of lines around 470, graph will not be generated. (no File)
+    // When the number of lines around 1000, graph will not be generated. (no File)
     fun `generate throws exception for very large diagram`() = runTest {
         val codeBuilder = StringBuilder("flowchart TD\n")
         for (i in 1..1000) {

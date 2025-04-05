@@ -1,3 +1,4 @@
+import model.GraphSyntaxError
 import kotlin.test.Test
 import org.junit.jupiter.api.Assertions.*
 
