@@ -40,9 +40,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.*
 
 
-private const val DEBOUNCE_DELAY = 100L
-private const val PROCESS_TIMEOUT = 5L
-private const val CACHE_SIZE = 20
+private const val DEBOUNCE_DELAY = 100L // Waiting duration before diagram generation
+private const val PROCESS_TIMEOUT = 5L // Timeout for process execution (diagram generation or mermaid check)
+private const val CACHE_SIZE = 20 // Maximum number of cached images
 
 data class DiagramState(
     val verticesList: List<String> = mutableListOf(),
@@ -67,6 +67,13 @@ class DiagramViewModel {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var diagramJob: Job? = null
     private val diagramGenerator = DiagramGenerator()
+
+    // Cache diagram bytes by generated Mermaid code
+    private val diagramCache = object : LinkedHashMap<String, ByteArray>(10, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, ByteArray>): Boolean {
+            return size > CACHE_SIZE
+        }
+    }
 
     var state by mutableStateOf(DiagramState())
         private set
@@ -200,7 +207,6 @@ class DiagramViewModel {
         )
         
         try {
-            // Get all unique valid vertices using the companion method
             val uniqueVertices = getUniqueVertices(lines)
 
             // Create a new state map that preserves existing toggle states
@@ -225,6 +231,16 @@ class DiagramViewModel {
         // Cancel previous job if it's still running
         diagramJob?.cancel()
 
+        if (diagramCache.containsKey(code)) {
+            state = state.copy(
+                imageBytes = diagramCache[code],
+                isLoading = false,
+                error = null
+            )
+            return
+        }
+
+
         diagramJob = viewModelScope.launch {
             delay(DEBOUNCE_DELAY) // Debounce
             state = state.copyWithLoading()
@@ -236,6 +252,10 @@ class DiagramViewModel {
                 val bytes = withContext(Dispatchers.IO) {
                     Files.readAllBytes(diagramPath)
                 }
+
+                // Store in cache
+                diagramCache[code] = bytes
+
                 state = state.copy(imageBytes = bytes, isLoading = false, error = null)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -269,6 +289,7 @@ class DiagramViewModel {
     fun dispose() {
         diagramJob?.cancel()
         viewModelScope.cancel()
+        diagramCache.clear()
     }
 
 }
@@ -431,7 +452,7 @@ private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
     val text = state.verticesList.joinToString("\n")
     val lineCount = text.count { it == '\n' } + 1
 
-    // Create shared scroll state
+    // Shared scrolling for line numbers and text field
     val scrollState = remember { ScrollState(0) }
 
     Row(modifier = Modifier.fillMaxSize()) {
@@ -450,13 +471,13 @@ private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
                 // Match the text field's padding
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Generate line numbers with consistent spacing
+                //Line numbers
                 for (i in 1..lineCount) {
                     Text(
                         text = i.toString().padStart(3, ' '),
                         style = MaterialTheme.typography.caption,
                         color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, // Use monospace font
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
                     )
                 }
@@ -488,7 +509,7 @@ private fun UserInputField(state: DiagramState, viewModel: DiagramViewModel) {
                 ) {
                     if (text.isEmpty()) {
                         Text(
-                            text = "One edge per line:\nA->B\nB->C",
+                            text = "One connection per line:\nA->B\nB<-C",
                             style = MaterialTheme.typography.body2,
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
@@ -529,7 +550,7 @@ private fun VerticesListDisplay(
                 modifier = Modifier.weight(1f)
             )
 
-            // Add buttons for bulk operations
+            // Buttons for bulk operations
             Button(
                 onClick = {
                     viewModel.bulkToggleVertices(uniqueVertices, true)
@@ -586,7 +607,7 @@ private fun VerticesListDisplay(
             )
         }
 
-        // Use LazyVerticalGrid with fixed cell size for performance
+        // Fixed cell size
         Surface(
             modifier = Modifier.fillMaxSize(),
             border = BorderStroke(1.dp, MaterialTheme.colors.onSurface.copy(alpha = 0.12f))
@@ -606,7 +627,7 @@ private fun VerticesListDisplay(
             ) {
                 items(
                     count = filteredVertices.size,
-                    key = { filteredVertices[it] } // Stable keys for better performance
+                    key = { filteredVertices[it] } // Stable keys
                 ) { index ->
                     val vertex = filteredVertices[index]
                     val isActive = state.verticesStates[vertex] == true
@@ -843,7 +864,6 @@ class DiagramGenerator {
 
             return outputFile
         } catch (e: Exception) {
-//            println("Error during diagram generation: ${e.message}")
             e.printStackTrace()
             throw e
         }
