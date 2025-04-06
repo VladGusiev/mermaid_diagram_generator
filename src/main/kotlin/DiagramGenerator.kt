@@ -76,7 +76,7 @@ class DiagramGenerator {
             }
 
             if (!Files.exists(outputFile)) {
-                throw IOException("Output graph file was not created. Consider lowering number of vertices.")
+                throw IOException("Output graph file was not created. Consider lowering number of vertices/connections. Or check if any special symbols/emojis are used in the graph.")
             }
 
             return outputFile

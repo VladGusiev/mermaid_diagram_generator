@@ -46,7 +46,7 @@ fun App() {
                 modifier = Modifier.weight(1f).fillMaxHeight()
             ) {
                 Text(
-                    text = "Input Graph",
+                    text = "Graph Input Field",
                     style = MaterialTheme.typography.h6,
                     color = MaterialTheme.colors.primary,
                     modifier = Modifier.padding(bottom = 8.dp)

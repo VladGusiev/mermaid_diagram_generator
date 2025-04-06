@@ -1,6 +1,6 @@
 # Graph Generator GUI Application using Mermaid
 
-This project is a graphical user interface **(GUI)** application built in **Kotlin** using **Compose for Desktop** which is designed to generate and visualize graphs based on user input.
+This project is a graphical user interface **(GUI)** application built in **Kotlin** using **Compose for Desktop** which is designed to generate and visualize graphs based on user text input.
 Application supports only directed graph type.
 
 ## Table of Contents
@@ -18,7 +18,7 @@ Application supports only directed graph type.
 - [Limitations](#limitations)
 
 ## Requirements
-- JDK 21 or lower
+- This application is developed and tested using JDK 21.
 - In order to run the application, user need mermaid CLI installed on their system.
 You can install it using npm:
 
@@ -28,7 +28,7 @@ You can install it using npm:
     more details can be found [here](https://github.com/mermaid-js/mermaid-cli)
 
 # Getting Started
-1. Ensure you have JDK 21 or lower installed 
+1. Ensure you have JDK 21 installed.
    - In case you have multiple JDK versions installed, you can specify the JDK version in the `gradle.properties` file:
     ```properties
     org.gradle.java.home=/path/to/desired/jdk
@@ -68,9 +68,9 @@ flowchart TD
 ```
 
 ## Other rules
-- Only one connection per line is allowed.
+- Only one connection per input line is allowed.
 - No other connection symbols besides `->` or `<-` are allowed.
-- No whitespaces are allowed in the vertices notation
+- No whitespaces, special symbols or emojis are allowed in the vertices names
 
 ## Example
 Input:
@@ -83,7 +83,7 @@ B -> b
 Output:
 
 <p align="center">
-    <img src="src/resources/exmaple_screenshot.png" alt="example graph" width="700"/>
+    <img src="src/resources/example_screenshot.png" alt="example graph" width="700"/>
 </p>
 
 # Features
@@ -96,7 +96,7 @@ Output:
     - While toggling vertices, the graph will be updated automatically.
 - Caching of most used graphs data for faster access.
 - Error detection for invalid input and more.
-- Zooming of the graph.
+- Zooming and panning of the graph.
 
 ## Error Handling
 The application provides error messages when:
