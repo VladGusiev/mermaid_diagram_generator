@@ -3,6 +3,20 @@
 This project is a graphical user interface **(GUI)** application built in **Kotlin** using **Compose for Desktop** which is designed to generate and visualize graphs based on user input.
 Application supports only directed graph type.
 
+## Table of Contents
+- [Requirements](#requirements)
+- [Getting Started](#getting-started)
+- [How to use](#how-to-use)
+  - [Graph Notation](#graph-notation)
+  - [Other rules](#other-rules)
+  - [Example](#example)
+- [Features](#features)
+  - [Error Handling](#error-handling)
+  - [Performance Optimizations](#performance-optimizations)
+- [Code Structure](#code-structure)
+- [Common Issues](#common-issues)
+- [Limitations](#limitations)
+
 ## Requirements
 - JDK 21 or lower
 - In order to run the application, user need mermaid CLI installed on their system.
@@ -14,11 +28,15 @@ You can install it using npm:
     more details can be found [here](https://github.com/mermaid-js/mermaid-cli)
 
 # Getting Started
-1. Ensure you have JDK 21 or lower installed
+1. Ensure you have JDK 21 or lower installed 
+   - In case you have multiple JDK versions installed, you can specify the JDK version in the `gradle.properties` file:
+    ```properties
+    org.gradle.java.home=/path/to/desired/jdk
+    ```
 2. Install Mermaid CLI: `npm install -g @mermaid-js/mermaid-cli`
 3. ```bash
     # Clone the repository
-    git clone https://github.com/VladGusiev/mermaid_diagram_generator/tree/main/src
+    git clone https://github.com/VladGusiev/mermaid_diagram_generator.git
     cd mermaid_diagram_generator/
     
     # Build the application
@@ -49,12 +67,12 @@ flowchart TD
     B --> A
 ```
 
-### Other rules:
+## Other rules
 - Only one connection per line is allowed.
 - No other connection symbols besides `->` or `<-` are allowed.
 - No whitespaces are allowed in the vertices notation
 
-### Example
+## Example
 Input:
 ```
 A -> B
@@ -63,23 +81,20 @@ C <- B
 B -> b
 ```
 Output:
-```mermaid
-flowchart TD
-    A --> B
-    A --> C
-    B --> C
-    B --> b
-```
+
+<p align="center">
+    <img src="src/resources/exmaple_screenshot.png" alt="example graph" width="700"/>
+</p>
 
 # Features
 - User-friendly GUI for easy interaction.
 - Automatic graph refresh based on user input.
-- responsive application even with large graphs.
+- Responsive application even with large graphs.
 - Shows all unique vertices in the graph.
     - Allows user to disable/enable vertices.
     - Search of vertices by name.
     - While toggling vertices, the graph will be updated automatically.
-- Caching of graphs data for faster access.
+- Caching of most used graphs data for faster access.
 - Error detection for invalid input and more.
 - Zooming of the graph.
 
@@ -92,7 +107,6 @@ The application provides error messages when:
 ## Performance Optimizations
 - Diagram caching to prevent regenerating identical graphs
 - Input debouncing to reduce processing during rapid typing
-- Efficient vertex toggling without unnecessary reprocessing
 
 # Code Structure
 - `src/main/kotlin/model` - Contains data classes and error handling models for the application.
@@ -110,8 +124,10 @@ The application provides error messages when:
   - Caching generated diagrams for performance
   - Debouncing input to prevent excessive diagram generation
 - `src/main/kotlin/Main.kt` - Application entry point that initializes the Compose UI and launches the application window.
+- `src/main/test/kotlin` - Contains unit tests for the application logic.
+- `src/main/test_graph.txt` - example of large graph.
 
-### Common Issues
+# Common Issues
 
 - **Cannot build the application** - Ensure you have the correct JDK version and mermaid CLI installed and configured correctly in PATH
 - **Error: Mermaid CLI not found** - Ensure Mermaid CLI is properly installed and available in your PATH
